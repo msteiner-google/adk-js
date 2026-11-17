@@ -341,37 +341,39 @@ export async function tryGetResetFunc(
 }
 
 /**
- * Parses CLI evalset file arguments of the form `file_path` or
- * `file_path:eval_1,eval_2` into a mapping from file path to requested eval IDs.
+ * Parses CLI eval set arguments of the form `<eval_set_file_path | eval_set_id>`
+ * or `<eval_set_file_path | eval_set_id>:eval_1,eval_2` into a mapping from
+ * eval set file path or ID to requested eval case IDs.
  *
- * @param evalSetFilePaths Array of evalset file specifications.
- * @returns Mapping of evalset file path to list of eval case names.
+ * @param evalsToRunInfo Array of eval set file paths or IDs, optionally with
+ *     colon-separated comma-delimited eval case IDs.
+ * @returns Mapping of eval set file path or ID to list of eval case IDs.
  */
 export function parseAndGetEvalsToRun(
-  evalSetFilePaths: string[],
+  evalsToRunInfo: string[],
 ): Record<string, string[]> {
   const evalSetToEvals: Record<string, string[]> = {};
-  for (const inputEvalSet of evalSetFilePaths) {
-    let evalSetFile: string;
+  for (const inputEvalSet of evalsToRunInfo) {
+    let evalSet: string;
     let evals: string[] = [];
     // Skip the colon of a Windows drive prefix (`C:\` or `C:/`), so an
     // absolute Windows path is not split at the drive.
     const hasDrivePrefix = /^[A-Za-z]:[\\/]/.test(inputEvalSet);
     const colonIndex = inputEvalSet.indexOf(':', hasDrivePrefix ? 3 : 0);
     if (colonIndex !== -1) {
-      evalSetFile = inputEvalSet.slice(0, colonIndex);
+      evalSet = inputEvalSet.slice(0, colonIndex);
       evals = inputEvalSet
         .slice(colonIndex + 1)
         .split(',')
-        .filter((s) => s.length > 0);
+        .filter((s) => s.trim().length > 0);
     } else {
-      evalSetFile = inputEvalSet;
+      evalSet = inputEvalSet;
     }
 
-    if (!Object.prototype.hasOwnProperty.call(evalSetToEvals, evalSetFile)) {
-      evalSetToEvals[evalSetFile] = [];
+    if (!Object.prototype.hasOwnProperty.call(evalSetToEvals, evalSet)) {
+      evalSetToEvals[evalSet] = [];
     }
-    evalSetToEvals[evalSetFile].push(...evals);
+    evalSetToEvals[evalSet].push(...evals);
   }
 
   return evalSetToEvals;
