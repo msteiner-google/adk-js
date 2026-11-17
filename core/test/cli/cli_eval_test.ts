@@ -10,6 +10,8 @@ import {
   Context,
   convertEvalSetToSchema,
   createEvent,
+  DatabaseSessionService,
+  type DatabaseSessionServiceOptions,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
   EvalCase,
@@ -21,6 +23,7 @@ import {
   Event,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
+  getSessionServiceFromUri,
   InMemorySessionService,
   InputValidationError,
   INTERNAL_METADATA_PREFIX,
@@ -191,6 +194,39 @@ describe('cli/cli_eval', () => {
         'C:\\evals\\set2.evalset.json': ['case_a', 'case_b'],
         'd:/evals/set3.evalset.json': ['case_c'],
       });
+    });
+
+    it('omits empty and whitespace-only eval case IDs in comma-separated lists', () => {
+      const parsed = parseAndGetEvalsToRun([
+        'set1:case_a, ,case_b,   ,',
+        'set2: ,  ',
+      ]);
+
+      expect(parsed).toEqual({
+        set1: ['case_a', 'case_b'],
+        set2: [],
+      });
+    });
+  });
+
+  describe('getSessionServiceFromUri', () => {
+    it('forwards DatabaseSessionServiceOptions to DatabaseSessionService', () => {
+      const dbOptions: DatabaseSessionServiceOptions = {
+        dbName: 'custom_db',
+        staleSession: 'reload',
+      };
+      const service = getSessionServiceFromUri(
+        'sqlite://:memory:',
+        dbOptions,
+      ) as DatabaseSessionService;
+
+      expect(service).toBeInstanceOf(DatabaseSessionService);
+      expect(
+        (service as unknown as {options?: {dbName?: string}}).options,
+      ).toEqual({dbName: 'custom_db'});
+      expect((service as unknown as {staleSession?: string}).staleSession).toBe(
+        'reload',
+      );
     });
   });
 

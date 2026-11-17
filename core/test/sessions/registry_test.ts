@@ -5,6 +5,8 @@
  */
 
 import {
+  DatabaseSessionService,
+  type DatabaseSessionServiceOptions,
   InMemorySessionService,
   VertexAiSessionService,
   getSessionServiceFromUri,
@@ -16,6 +18,20 @@ describe('Registry', () => {
     it('should return InMemorySessionService for "memory://" uri', () => {
       const service = getSessionServiceFromUri('memory://');
       expect(service).to.be.instanceOf(InMemorySessionService);
+    });
+
+    it('should return DatabaseSessionService with forwarded options for a database uri', () => {
+      const sessionDbOptions: DatabaseSessionServiceOptions = {
+        dbName: 'test_sessions_db',
+      };
+      const service = getSessionServiceFromUri(
+        'sqlite://:memory:',
+        sessionDbOptions,
+      );
+      expect(service).to.be.instanceOf(DatabaseSessionService);
+      expect(
+        (service as unknown as {options?: {dbName?: string}}).options,
+      ).to.deep.equal({dbName: 'test_sessions_db'});
     });
 
     it('should throw error for unsupported uri', () => {

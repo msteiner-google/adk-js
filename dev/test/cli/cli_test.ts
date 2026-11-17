@@ -5,9 +5,12 @@
  */
 
 import {
+  DatabaseSessionService,
+  type DatabaseSessionServiceOptions,
   InMemoryMemoryService,
   InMemorySessionService,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   LogLevel,
   logToTmpFolder,
   setupAdkLogger,
@@ -1010,7 +1013,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1097,7 +1104,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1185,7 +1196,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1208,6 +1223,96 @@ describe('CLI Entrypoint', () => {
         expect(storedResult.evalSetId).toBe('structured_set');
         expect(storedResult.evalCaseResults).toHaveLength(1);
         expect(storedResult.evalCaseResults[0].evalId).toBe('selected_case');
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('runs the eval command with a local eval set ID and persists the evaluation result', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-id-'),
+      );
+      const appName = 'test_app';
+      const evalSetId = 'test_eval_set_id';
+      const agentDir = path.join(tempDir, appName);
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'my_eval_agent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetsManager = new LocalEvalSetsManager(tempDir);
+      evalSetsManager.createEvalSet(appName, evalSetId);
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case1',
+        conversation: [
+          {
+            invocationId: 'inv-1',
+            userContent: {role: 'user', parts: [{text: 'ping'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: ping'}]},
+          },
+        ],
+      });
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case2',
+        conversation: [
+          {
+            invocationId: 'inv-2',
+            userContent: {role: 'user', parts: [{text: 'pong'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: pong'}]},
+          },
+        ],
+      });
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, `${evalSetId}:case1,case2`]);
+
+        expect(process.exitCode).toBeUndefined();
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 2');
+        expect(output).toContain('Tests failed: 0');
+
+        const evalSetResultsManager = new LocalEvalSetResultsManager(tempDir);
+        const evalSetResults =
+          evalSetResultsManager.listEvalSetResults(appName);
+        expect(evalSetResults).toHaveLength(1);
+        const storedResult = evalSetResultsManager.getEvalSetResult(
+          appName,
+          evalSetResults[0],
+        );
+        expect(storedResult.evalSetId).toBe(evalSetId);
+        expect(storedResult.evalCaseResults.map((c) => c.evalId)).toEqual([
+          'case1',
+          'case2',
+        ]);
       } finally {
         stdoutSpy.mockRestore();
         fs.rmSync(tempDir, {recursive: true, force: true});
@@ -2361,5 +2466,24 @@ describe('getSessionServiceFromOptions', () => {
         sessionServiceUri: 'agentengine://123',
       }),
     ).toThrow('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
+  });
+
+  it('forwards sessionDbOptions when constructing a DatabaseSessionService', () => {
+    const sessionDbOptions: DatabaseSessionServiceOptions = {
+      dbName: 'cli_custom_db',
+      staleSession: 'reload',
+    };
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri: 'sqlite://:memory:',
+      sessionDbOptions,
+    });
+
+    expect(service).toBeInstanceOf(DatabaseSessionService);
+    expect(
+      (service as unknown as {options?: {dbName?: string}}).options,
+    ).toEqual({dbName: 'cli_custom_db'});
+    expect((service as unknown as {staleSession?: string}).staleSession).toBe(
+      'reload',
+    );
   });
 });
