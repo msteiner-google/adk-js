@@ -10,6 +10,7 @@ import {
   BaseMemoryService,
   BaseSessionService,
   createGcsEvalManagersFromUri,
+  type DatabaseSessionServiceOptions,
   EvalCase,
   EvalMetric,
   EvalResult,
@@ -26,6 +27,7 @@ import {
   loadDotenvForAgent,
   loadEvalSetFromFile,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   LogLevel,
   logToTmpFolder,
   parseAndGetEvalsToRun,
@@ -142,6 +144,7 @@ function parseAgentEngineUri(uri: string): AgentEngineResource {
 /** Options that select the session service the CLI commands use. */
 export interface SessionServiceOptions {
   sessionServiceUri?: string;
+  sessionDbOptions?: DatabaseSessionServiceOptions;
   baseDir?: string;
 }
 
@@ -156,6 +159,7 @@ export function getSessionServiceFromOptions(
   baseDir?: string,
 ): BaseSessionService {
   let uri: string | undefined;
+  let sessionDbOptions: DatabaseSessionServiceOptions | undefined;
   let dir = baseDir;
 
   if (typeof optionsOrUri === 'string') {
@@ -165,6 +169,7 @@ export function getSessionServiceFromOptions(
       optionsOrUri.sessionServiceUri ??
       ((optionsOrUri as Record<string, unknown>)['session_service_uri'] as
         string | undefined);
+    sessionDbOptions = optionsOrUri.sessionDbOptions;
     dir = optionsOrUri.baseDir ?? dir;
   }
 
@@ -178,6 +183,7 @@ export function getSessionServiceFromOptions(
 
   return getSessionServiceFromUri(
     uri || process.env.DATABASE_URL || 'memory://',
+    sessionDbOptions,
   );
 }
 
@@ -304,7 +310,7 @@ async function getStoredEvalSet({
 /**
  * Loads the eval cases that `adk eval` runs, keyed by eval set ID.
  *
- * Each key of `evalSetToEvals` is an eval set file path. When an
+ * Each key of `evalSetToEvals` is an eval set file path or eval set ID. When an
  * `evalSetsManager` is given and the first key is not an existing file, the
  * keys are eval set IDs that the manager reads instead. An empty case list
  * runs every case of the eval set.
@@ -775,9 +781,10 @@ export function createProgram(): Command {
     )
     .argument(
       '[eval_set_file_path_or_id...]',
-      'One or more eval set file paths, each optionally followed by ' +
-        ':eval_1,eval_2. With --eval_storage_uri, the values are eval set ' +
-        'IDs read from the storage, unless the first value is an existing file.',
+      'One or more eval set file paths or eval set IDs, each optionally ' +
+        'followed by :eval_1,eval_2. Unless the first value is an existing ' +
+        'file, the values are eval set IDs read from local storage or the ' +
+        '--eval_storage_uri bucket.',
     )
     .option(
       '--config-file-path, --config_file_path <string>',
@@ -827,10 +834,14 @@ export function createProgram(): Command {
           const appName = isAgentFile
             ? path.basename(absAgentPath, path.extname(absAgentPath))
             : path.basename(absAgentPath);
+          const agentsDir = path.dirname(absAgentPath);
           const evalManagers = await getEvalManagersFromOptions(options);
+          const evalSetsManager: EvalSetsManager =
+            evalManagers?.evalSetsManager ??
+            new LocalEvalSetsManager(agentsDir);
           const evalCasesByEvalSetId = await loadEvalCasesToRun({
             evalSetToEvals: parseAndGetEvalsToRun(evalSetFilePathsOrIds),
-            evalSetsManager: evalManagers?.evalSetsManager,
+            evalSetsManager,
             appName,
           });
 
@@ -847,7 +858,7 @@ export function createProgram(): Command {
 
           const evalSetResultsManager: EvalSetResultsManager =
             evalManagers?.evalSetResultsManager ??
-            new LocalEvalSetResultsManager(path.dirname(absAgentPath));
+            new LocalEvalSetResultsManager(agentsDir);
           const evalSetIdToEvalResults: Record<string, EvalResult[]> = {};
           for (const evalResult of evalResults) {
             const rawSetId = evalResult.eval_set_id;
