@@ -16,6 +16,7 @@ import {
 import {
   BigQueryToolConfig,
   type BigQueryToolConfigOptions,
+  DEFAULT_MAX_QUERY_RESULT_ROWS,
   isBigQueryToolConfig,
   WriteMode,
 } from './config.js';
@@ -24,7 +25,6 @@ import {
   toBigQueryToolErrorResult,
 } from './tool_error.js';
 
-const DEFAULT_MAX_QUERY_RESULT_ROWS = 50;
 const MAX_REMEMBERED_SESSIONS = 1024;
 
 interface BigQuerySessionInfo {
@@ -233,10 +233,12 @@ export async function executeSql(
       }
     }
 
+    const maxQueryResultRows =
+      args.config?.maxQueryResultRows ?? DEFAULT_MAX_QUERY_RESULT_ROWS;
     const queryOptions: BigQueryQueryOptions = {
       query: args.query,
       projectId: bqClient.projectId,
-      maxResults: DEFAULT_MAX_QUERY_RESULT_ROWS,
+      maxResults: maxQueryResultRows,
     };
     if (connectionProperties !== undefined) {
       queryOptions.connectionProperties = connectionProperties;
@@ -251,7 +253,7 @@ export async function executeSql(
       return sanitized;
     });
     const result: ExecuteSqlSuccessResult = {status: 'SUCCESS', rows};
-    if (rows.length === DEFAULT_MAX_QUERY_RESULT_ROWS) {
+    if (rows.length === maxQueryResultRows) {
       result.result_is_likely_truncated = true;
     }
     return result;

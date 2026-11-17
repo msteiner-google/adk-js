@@ -829,6 +829,31 @@ describe('executeSql query tool', () => {
     });
   });
 
+  it('respects custom config.maxQueryResultRows for maxResults and truncation flag', async () => {
+    const tenRows = Array.from({length: 10}, (_, index) => ({id: index}));
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue(tenRows);
+
+    const result = await executeSql({
+      project_id: 'my-project',
+      query: 'SELECT id FROM largeTable',
+      credentials: mockCredentials,
+      config: {maxQueryResultRows: 10},
+    });
+
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'SELECT id FROM largeTable',
+      projectId: 'my-project',
+      maxResults: 10,
+    });
+    expect(result).toEqual({
+      status: 'SUCCESS',
+      rows: tenRows,
+      result_is_likely_truncated: true,
+    });
+  });
+
   it('caps rows at 50 and sets result_is_likely_truncated when the fake SDK returns more than 50 rows', async () => {
     const sixtyRows = Array.from({length: 60}, (_, index) => ({id: index}));
     const sdkQuerySpy = vi.fn(

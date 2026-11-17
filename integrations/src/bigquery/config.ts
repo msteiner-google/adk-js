@@ -30,6 +30,8 @@ export enum WriteMode {
   ALLOWED = 'allowed',
 }
 
+export const DEFAULT_MAX_QUERY_RESULT_ROWS = 50;
+
 /**
  * Configuration options for {@link BigQueryToolConfig}.
  */
@@ -38,6 +40,11 @@ export interface BigQueryToolConfigOptions {
    * Write mode for BigQuery tools. Defaults to {@link WriteMode.BLOCKED}.
    */
   writeMode?: WriteMode;
+
+  /**
+   * Maximum number of rows to return from a query. Defaults to `50`.
+   */
+  maxQueryResultRows?: number;
 }
 
 const BIGQUERY_TOOL_CONFIG_SIGNATURE_SYMBOL = Symbol.for(
@@ -68,7 +75,14 @@ export class BigQueryToolConfig {
    */
   readonly writeMode: WriteMode;
 
+  /**
+   * Maximum number of rows to return from a query. Defaults to `50`.
+   */
+  readonly maxQueryResultRows: number;
+
   constructor(options: BigQueryToolConfigOptions = {}) {
     this.writeMode = options.writeMode ?? WriteMode.BLOCKED;
+    this.maxQueryResultRows =
+      options.maxQueryResultRows ?? DEFAULT_MAX_QUERY_RESULT_ROWS;
   }
 }
