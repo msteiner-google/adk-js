@@ -68,6 +68,11 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
         invocationContext.runConfig.enableAffectiveDialog;
       llmRequest.liveConnectConfig.proactivity =
         invocationContext.runConfig.proactivity;
+      if (invocationContext.runConfig.sessionResumption !== undefined) {
+        llmRequest.liveConnectConfig.sessionResumption = {
+          ...invocationContext.runConfig.sessionResumption,
+        };
+      }
     }
   }
 }

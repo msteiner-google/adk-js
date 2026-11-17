@@ -183,6 +183,9 @@ function applyLiveRunConfig(
       (liveConfig as Record<string, unknown>)[k] = runConfig[k];
     }
   }
+  if (runConfig.sessionResumption !== undefined) {
+    liveConfig.sessionResumption = {...runConfig.sessionResumption};
+  }
   if (runConfig.supportCfc) {
     liveConfig.responseModalities = [Modality.TEXT];
   }
@@ -1092,6 +1095,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       if (handle) {
         llmRequest.liveConnectConfig ??= {};
         llmRequest.liveConnectConfig.sessionResumption = {
+          ...llmRequest.liveConnectConfig.sessionResumption,
           handle,
           transparent: true,
         };

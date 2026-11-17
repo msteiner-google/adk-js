@@ -312,6 +312,7 @@ describe('BasicLlmRequestProcessor', () => {
       realtimeInputConfig: {automaticActivityDetection: {disabled: true}},
       enableAffectiveDialog: true,
       proactivity: {proactiveAudio: true},
+      sessionResumption: {transparent: true},
     };
     const invocationContext = createMockInvocationContext(agent, runConfig);
     const llmRequest = makeLlmRequest();
@@ -331,6 +332,12 @@ describe('BasicLlmRequestProcessor', () => {
     expect(llmRequest.liveConnectConfig.proactivity).toEqual({
       proactiveAudio: true,
     });
+    expect(llmRequest.liveConnectConfig.sessionResumption).toEqual({
+      transparent: true,
+    });
+    expect(llmRequest.liveConnectConfig.sessionResumption).not.toBe(
+      runConfig.sessionResumption,
+    );
   });
 
   it('should not populate liveConnectConfig when runConfig is not set', async () => {
@@ -348,6 +355,7 @@ describe('BasicLlmRequestProcessor', () => {
     expect(llmRequest.liveConnectConfig.realtimeInputConfig).toBeUndefined();
     expect(llmRequest.liveConnectConfig.enableAffectiveDialog).toBeUndefined();
     expect(llmRequest.liveConnectConfig.proactivity).toBeUndefined();
+    expect(llmRequest.liveConnectConfig.sessionResumption).toBeUndefined();
   });
 
   it('should yield no events', async () => {

@@ -2966,6 +2966,59 @@ describe('LlmAgent live streaming tools and supportCfc', () => {
     );
   });
 
+  it('forwards runConfig.sessionResumption onto liveConnectConfig without mutating runConfig', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'resumption ready'}]},
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'liveResumptionAgent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess-live-resumption',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+    const sessionResumption = {transparent: true};
+    const runConfig = createRunConfig({
+      responseModalities: [Modality.AUDIO],
+      sessionResumption,
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv-live-resumption',
+      session,
+      agent,
+      liveRequestQueue,
+      runConfig,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      transparent: true,
+    });
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.sessionResumption,
+    ).not.toBe(sessionResumption);
+  });
+
   it('keeps one event id across partial chunks and final event of a streamed response, minting a fresh id only after a complete event', async () => {
     class MultiResponseLlm extends BaseLlm {
       constructor(private readonly responses: LlmResponse[]) {

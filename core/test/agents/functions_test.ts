@@ -41,7 +41,7 @@ import {
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {Content, FunctionCall, FunctionResponse} from '@google/genai';
+import {Content, FunctionCall, FunctionResponse, Type} from '@google/genai';
 import {context, SpanStatusCode, trace} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {
@@ -2878,7 +2878,7 @@ describe('async tool callbacks on LlmAgent', () => {
     });
   }
 
-  it('test_async_before_tool_callback', async () => {
+  it('executes an async beforeToolCallback and returns its response', async () => {
     const mockResp = {test: 'before_tool_callback'};
     const resultEvent = await invokeToolWithCallbacks({
       beforeToolCallback: async () => mockResp,
@@ -2890,7 +2890,7 @@ describe('async tool callbacks on LlmAgent', () => {
     ).toEqual(mockResp);
   });
 
-  it('test_async_after_tool_callback', async () => {
+  it('executes an async afterToolCallback and returns its response', async () => {
     const mockResp = {test: 'after_tool_callback'};
     const resultEvent = await invokeToolWithCallbacks({
       afterToolCallback: async () => mockResp,
@@ -3376,5 +3376,284 @@ describe('parallel tool state merging and multi-tool EUC resumption', () => {
     expect(finalMergedParts?.[1]?.functionResponse?.response).toEqual({
       result: 2,
     });
+  });
+});
+
+describe('functionCall.args deep cloning', () => {
+  function createCloneTestContext(agent: LlmAgent): InvocationContext {
+    return new InvocationContext({
+      invocationId: 'inv-args-clone',
+      agent,
+      session: createSession({
+        id: 'sess-args-clone',
+        userId: 'user-args-clone',
+        appName: 'app-args-clone',
+      }),
+      liveRequestQueue: new LiveRequestQueue(),
+      pluginManager: new PluginManager(),
+    });
+  }
+
+  function isNestedClonePayload(value: unknown): value is {
+    nestedObject: {inner: {value: string}};
+    items: string[];
+  } {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'nestedObject' in value &&
+      'items' in value &&
+      Array.isArray(value.items)
+    );
+  }
+
+  it('passes a distinct copy of functionCall.args to tools and callbacks in async and live modes', async () => {
+    const receivedRefs: unknown[] = [];
+    const inspectTool = new FunctionTool({
+      name: 'inspectTool',
+      description: 'captures the args object reference',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => {
+        receivedRefs.push(input);
+        return {result: 'ok'};
+      },
+    });
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [inspectTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const originalArgs: Record<string, unknown> = {
+      param1: 'value1',
+      param2: 42,
+    };
+    const functionCall: FunctionCall = {
+      id: 'fc-clone-1',
+      name: inspectTool.name,
+      args: originalArgs,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[inspectTool.name]: inspectTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[inspectTool.name]: inspectTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(asyncResult).not.toBeNull();
+    expect(liveResult).not.toBeNull();
+    expect(receivedRefs).toHaveLength(2);
+    expect(receivedRefs[0]).toEqual(originalArgs);
+    expect(receivedRefs[0]).not.toBe(originalArgs);
+    expect(receivedRefs[1]).toEqual(originalArgs);
+    expect(receivedRefs[1]).not.toBe(originalArgs);
+    expect(functionCall.args).toEqual({param1: 'value1', param2: 42});
+  });
+
+  it('defaults undefined functionCall.args to an empty object in async and live modes', async () => {
+    const simpleTool = new FunctionTool({
+      name: 'simpleTool',
+      description: 'handles empty args',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => ({
+        receivedKeys:
+          typeof input === 'object' && input !== null ? Object.keys(input) : [],
+      }),
+    });
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [simpleTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const functionCall: FunctionCall = {
+      id: 'fc-undef-args',
+      name: simpleTool.name,
+      args: undefined,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[simpleTool.name]: simpleTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[simpleTool.name]: simpleTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      receivedKeys: [],
+    });
+    expect(liveResult?.content?.parts?.[0]?.functionResponse?.response).toEqual(
+      {
+        receivedKeys: [],
+      },
+    );
+    expect(functionCall.args).toBeUndefined();
+  });
+
+  it('preserves top-level functionCall.args when a callback or tool mutates the copied args', async () => {
+    const echoTool = new FunctionTool({
+      name: 'echoTool',
+      description: 'echoes and mutates top-level args',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => {
+        if (
+          typeof input === 'object' &&
+          input !== null &&
+          'textParam' in input &&
+          'countParam' in input
+        ) {
+          const receivedArgs = {
+            textParam: input.textParam,
+            countParam: input.countParam,
+          };
+          input.textParam = 'mutatedInTool';
+          return {result: 'ok', receivedArgs};
+        }
+        return {result: 'unexpected'};
+      },
+    });
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [echoTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const originalArgs = {textParam: 'originalValue', countParam: 123};
+    const functionCall: FunctionCall = {
+      id: 'fc-top-level',
+      name: echoTool.name,
+      args: originalArgs,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[echoTool.name]: echoTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(functionCall.args).toEqual({
+      textParam: 'originalValue',
+      countParam: 123,
+    });
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      result: 'ok',
+      receivedArgs: {textParam: 'originalValue', countParam: 123},
+    });
+  });
+
+  it('deep-clones nested objects and arrays so in-place mutations do not affect functionCall.args', async () => {
+    const mutatingTool = new FunctionTool({
+      name: 'mutatingTool',
+      description: 'mutates nested structures in place',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => {
+        if (isNestedClonePayload(input)) {
+          input.nestedObject.inner.value = 'modified';
+          input.items.push('newItem');
+          return {
+            result: 'ok',
+            receivedNested: input.nestedObject,
+            receivedItems: input.items,
+          };
+        }
+        return {result: 'unexpected'};
+      },
+    });
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [mutatingTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const originalNested = {inner: {value: 'original'}};
+    const originalItems = ['item1', 'item2'];
+    const originalArgs = {
+      nestedObject: originalNested,
+      items: originalItems,
+    };
+    const functionCall: FunctionCall = {
+      id: 'fc-deep-copy',
+      name: mutatingTool.name,
+      args: originalArgs,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[mutatingTool.name]: mutatingTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[mutatingTool.name]: mutatingTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(functionCall.args).toEqual({
+      nestedObject: {inner: {value: 'original'}},
+      items: ['item1', 'item2'],
+    });
+    expect(originalNested.inner.value).toBe('original');
+    expect(originalItems).toEqual(['item1', 'item2']);
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      result: 'ok',
+      receivedNested: {inner: {value: 'modified'}},
+      receivedItems: ['item1', 'item2', 'newItem'],
+    });
+    expect(liveResult?.content?.parts?.[0]?.functionResponse?.response).toEqual(
+      {
+        result: 'ok',
+        receivedNested: {inner: {value: 'modified'}},
+        receivedItems: ['item1', 'item2', 'newItem'],
+      },
+    );
   });
 });
