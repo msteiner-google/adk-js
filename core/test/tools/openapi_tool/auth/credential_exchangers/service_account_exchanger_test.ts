@@ -120,7 +120,6 @@ describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
         authType: AuthCredentialTypes.SERVICE_ACCOUNT,
         serviceAccount: {
           useDefaultCredential: true,
-          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
         },
       },
     });
@@ -129,6 +128,9 @@ describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
     expect(result.credential.http?.scheme).toBe('bearer');
     expect(result.credential.http?.credentials.token).toBe('mock_access_token');
     expect(GoogleAuth).toHaveBeenCalledTimes(1);
+    expect(GoogleAuth).toHaveBeenCalledWith({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
     expect(JWT).not.toHaveBeenCalled();
   });
 
