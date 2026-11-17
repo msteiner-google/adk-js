@@ -11,6 +11,7 @@ import {
   GeminiParams,
   GoogleLLMVariant,
   InvocationContext,
+  LLMRegistry,
   LlmAgent,
   LlmRequest,
   LlmResponse,
@@ -1641,12 +1642,13 @@ describe('GoogleLlm', () => {
 
   describe('supportedModels', () => {
     it('defines regex patterns matching supported Gemini model names and Vertex endpoints', () => {
-      expect(Gemini.supportedModels).toHaveLength(3);
+      expect(Gemini.supportedModels).toHaveLength(4);
       expect(Gemini.supportedModels[0]).toEqual(/gemini-.*/);
-      expect(Gemini.supportedModels[1]).toEqual(
+      expect(Gemini.supportedModels[1]).toEqual(/model-optimizer-.*/);
+      expect(Gemini.supportedModels[2]).toEqual(
         /projects\/.+\/locations\/.+\/endpoints\/.+/,
       );
-      expect(Gemini.supportedModels[2]).toEqual(
+      expect(Gemini.supportedModels[3]).toEqual(
         /projects\/.+\/locations\/.+\/publishers\/google\/models\/gemini.+/,
       );
 
@@ -1657,6 +1659,8 @@ describe('GoogleLlm', () => {
 
       expect(isSupported('gemini-1.5-flash')).toBe(true);
       expect(isSupported('gemini-1.5-pro')).toBe(true);
+      expect(isSupported('model-optimizer-exp-04-09')).toBe(true);
+      expect(LLMRegistry.resolve('model-optimizer-exp-04-09')).toBe(Gemini);
       expect(isSupported('projects/p/locations/l/endpoints/e')).toBe(true);
       expect(
         isSupported(
@@ -1747,5 +1751,25 @@ describe('Gemini computer use requests', () => {
       'You are a browser agent.',
     );
     expect(llmRequest.toolsDict).toEqual({wait: waitTool});
+  });
+
+  it('handles a request when config is omitted', async () => {
+    const {llmRequest, waitTool} = makeComputerUseRequest('gemini-2.5-flash');
+    llmRequest.config = undefined;
+
+    await send(llmRequest);
+
+    expect(llmRequest.config).toEqual({});
+    expect(llmRequest.toolsDict).toEqual({wait: waitTool});
+  });
+
+  it('does not add wait_5_seconds when wait is absent from toolsDict', async () => {
+    const {llmRequest} = makeComputerUseRequest('gemini-2.5-flash');
+    llmRequest.toolsDict = {};
+
+    await send(llmRequest);
+
+    expect(llmRequest.config?.systemInstruction).toBeUndefined();
+    expect(llmRequest.toolsDict).toEqual({});
   });
 });

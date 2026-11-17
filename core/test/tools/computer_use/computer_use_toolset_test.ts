@@ -562,6 +562,21 @@ describe('ComputerUseToolset', () => {
         'key_up',
       ]);
     });
+
+    it('propagates an error when computer.environment rejects', async () => {
+      const {toolset, computer} = makeToolset();
+      const environmentSpy = vi
+        .spyOn(computer, 'environment')
+        .mockRejectedValueOnce(new Error('Environment failed'));
+
+      await expect(
+        toolset.processLlmRequest(
+          makeContext(),
+          makeRequest('gemini-2.5-flash'),
+        ),
+      ).rejects.toThrow('Environment failed');
+      environmentSpy.mockRestore();
+    });
   });
 
   describe('actions', () => {
