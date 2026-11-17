@@ -135,6 +135,23 @@ describe('GoogleLlm', () => {
     expect(options.headers!['x-goog-api-client']).toContain('google-adk/');
   });
 
+  it('should store retryOptions and forward them on apiClient httpOptions', () => {
+    const retryOptions = {initialDelay: 1, attempts: 2};
+    const llm = new Gemini({apiKey: 'test-key', retryOptions});
+    const spy = vi.mocked(GoogleGenAI);
+    spy.mockClear();
+
+    expect(llm.retryOptions).toEqual(retryOptions);
+    expect(llm.apiClient).toBeDefined();
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpOptions: expect.objectContaining({
+          retryOptions,
+        }),
+      }),
+    );
+  });
+
   it('should initialize liveApiClient with only tracking headers and apiVersion', () => {
     const userHeaders = {'x-custom-header': 'should-not-be-here'};
     const llm = new TestGemini({apiKey: 'test-key', headers: userHeaders});
@@ -771,6 +788,12 @@ describe('GoogleLlm', () => {
         responses.push(response);
       }
 
+      const expectedTrackingHeaders = Object.fromEntries(
+        Object.entries(trackingHeaders).map(([key, value]) => [
+          key,
+          `${value} custom`,
+        ]),
+      );
       expect(responses).toHaveLength(1);
       expect(generateContentMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -778,7 +801,7 @@ describe('GoogleLlm', () => {
             httpOptions: {
               headers: {
                 'custom-header': 'custom-value',
-                ...trackingHeaders,
+                ...expectedTrackingHeaders,
               },
             },
           }),
@@ -823,35 +846,52 @@ describe('GoogleLlm', () => {
       );
     });
 
-    it('should leave config.httpOptions undefined when no custom headers are provided', async () => {
-      const llm = new TestGemini({apiKey: 'test-key'});
-      const generateContentMock = vi.fn().mockResolvedValue({
-        candidates: [{content: {parts: [{text: 'response'}]}}],
-      });
-      llm.apiClient.models.generateContent = generateContentMock;
+    it.each([true, false])(
+      'should patch tracking headers when config.httpOptions is undefined (stream=%s)',
+      async (stream) => {
+        const llm = new TestGemini({apiKey: 'test-key'});
+        const trackingHeaders = llm.getTrackingHeaders();
+        const responseChunk = {
+          candidates: [{content: {parts: [{text: 'response'}]}}],
+        };
+        const generateContentMock = vi.fn().mockResolvedValue(responseChunk);
+        const generateContentStreamMock = vi
+          .fn()
+          .mockResolvedValue([responseChunk]);
+        llm.apiClient.models.generateContent = generateContentMock;
+        llm.apiClient.models.generateContentStream = generateContentStreamMock;
 
-      const llmRequest: LlmRequest = {
-        contents: [{role: 'user', parts: [{text: 'hello'}]}],
-        config: {},
-        liveConnectConfig: {},
-        toolsDict: {},
-      };
+        const llmRequest: LlmRequest = {
+          contents: [{role: 'user', parts: [{text: 'hello'}]}],
+          config: {},
+          liveConnectConfig: {},
+          toolsDict: {},
+        };
 
-      const responses: LlmResponse[] = [];
-      for await (const response of llm.generateContentAsync(
-        llmRequest,
-        false,
-      )) {
-        responses.push(response);
-      }
+        const responses: LlmResponse[] = [];
+        for await (const response of llm.generateContentAsync(
+          llmRequest,
+          stream,
+        )) {
+          responses.push(response);
+        }
 
-      expect(responses).toHaveLength(1);
-      expect(llmRequest.config?.httpOptions).toBeUndefined();
-      expect(generateContentMock).toHaveBeenCalledTimes(1);
-      expect(
-        generateContentMock.mock.calls[0]?.[0]?.config?.httpOptions,
-      ).toBeUndefined();
-    });
+        expect(responses).toHaveLength(stream ? 2 : 1);
+        const targetMock = stream
+          ? generateContentStreamMock
+          : generateContentMock;
+        expect(targetMock).toHaveBeenCalledTimes(1);
+        expect(targetMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              httpOptions: {
+                headers: trackingHeaders,
+              },
+            }),
+          }),
+        );
+      },
+    );
   });
 
   describe('generateContentAsync streaming', () => {
@@ -1759,7 +1799,11 @@ describe('Gemini computer use requests', () => {
 
     await send(llmRequest);
 
-    expect(llmRequest.config).toEqual({});
+    expect(llmRequest.config).toEqual({
+      httpOptions: {
+        headers: new TestGemini({apiKey: 'test-key'}).getTrackingHeaders(),
+      },
+    });
     expect(llmRequest.toolsDict).toEqual({wait: waitTool});
   });
 
